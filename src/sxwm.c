@@ -85,7 +85,6 @@ void update_net_client_list(void);
 void update_struts(void);
 int xerr(Display *dpy, XErrorEvent *ee);
 void xev_case(XEvent *xev);
-#include "config.h"
 
 Atom atom_net_active_window;
 Atom atom_net_current_desktop;
@@ -983,14 +982,6 @@ void init_defaults(void)
 	default_config.resize_master_amt = 5;
 	default_config.snap_distance = 5;
 	default_config.bindsn = 0;
-
-	for (unsigned long i = 0; i < LENGTH(binds); i++) {
-		default_config.binds[i].mods = binds[i].mods;
-		default_config.binds[i].keysym = binds[i].keysym;
-		default_config.binds[i].action.cmd = binds[i].action.cmd;
-		default_config.binds[i].type = binds[i].type;
-		default_config.bindsn++;
-	}
 
 	user_config = default_config;
 }
