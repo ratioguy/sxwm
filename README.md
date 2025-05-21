@@ -230,7 +230,7 @@ yay -S sxwm
 ### Build from Source
 
 ```sh
-git clone --depth=1 https://github.com/uint23/sxwm.git
+git clone --depth=1 https://github.com/ratioguy/sxwm.git
 cd sxwm/
 make
 sudo make clean install
