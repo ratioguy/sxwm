@@ -1,11 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
+#include <X11/Xlib.h>
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <errno.h>
 #include <X11/keysym.h>
 
 #include "parser.h"
@@ -132,9 +132,8 @@ int parser(Config *cfg)
 		return -1;
 	}
 
-	// check $XDG_CONFIG_HOME/sxwmrc, then $XDG_CONFIG_HOME/sxwm/sxwmrc, then $HOME/.config/sxwmrc
+	// Determine config file path
 	const char *xdg_config_home = getenv("XDG_CONFIG_HOME");
-
 	if (xdg_config_home) {
 		snprintf(path, sizeof path, "%s/sxwmrc", xdg_config_home);
 		if (access(path, R_OK) == 0) {
@@ -157,7 +156,11 @@ int parser(Config *cfg)
 		goto found;
 	}
 
-found:; // label followed by declaration is a C23 extension
+	// Nothing found
+	fprintf(stderr, "sxwmrc: no configuration file found\n");
+	return -1;
+
+found:;
 	FILE *f = fopen(path, "r");
 	if (!f) {
 		fprintf(stderr, "sxwmrc: cannot open %s\n", path);
@@ -168,8 +171,14 @@ found:; // label followed by declaration is a C23 extension
 	int lineno = 0;
 	int should_floatn = 0;
 
+	// Initialize should_float matrix
 	for (int j = 0; j < 256; j++) {
-		cfg->should_float[j] = calloc(256, sizeof(char *)); // allocate array of 256 strings
+		cfg->should_float[j] = calloc(256, sizeof(char *));
+		if (!cfg->should_float[j]) {
+			fprintf(stderr, "calloc failed\n");
+			fclose(f);
+			return -1;
+		}
 	}
 
 	while (fgets(line, sizeof line, f)) {
@@ -184,6 +193,7 @@ found:; // label followed by declaration is a C23 extension
 			fprintf(stderr, "sxwmrc:%d: missing ':'\n", lineno);
 			continue;
 		}
+
 		*sep = '\0';
 		char *key = strip(s);
 		char *rest = strip(sep + 1);
@@ -212,8 +222,16 @@ found:; // label followed by declaration is a C23 extension
 		else if (!strcmp(key, "swap_border_colour")) {
 			cfg->border_swap_col = parse_col(rest);
 		}
+		else if (!strcmp(key, "new_win_focus")) {
+			if (!strcmp(rest, "true")) {
+				cfg->new_win_focus = True;
+			}
+			else {
+				cfg->new_win_focus = False;
+			}
+		}
 		else if (!strcmp(key, "master_width")) {
-			float mf = atoi(rest) / 100.0f;
+			float mf = (float)atoi(rest) / 100.0f;
 			for (int i = 0; i < MAX_MONITORS; i++) {
 				cfg->master_width[i] = mf;
 			}
@@ -228,62 +246,36 @@ found:; // label followed by declaration is a C23 extension
 			cfg->snap_distance = atoi(rest);
 		}
 		else if (!strcmp(key, "should_float")) {
-			// should_float: binary --arg,binary2 parameter --arg,binary3
-
 			if (should_floatn >= 256) {
 				fprintf(stderr, "sxwmrc:%d: too many should_float entries\n", lineno);
 				continue;
 			}
 
-			char *win = strip(rest);
+			char *comment = strchr(rest, '#');
+			size_t len = comment ? (size_t)(comment - rest) : strlen(rest);
+			char win[len + 1];
+			strncpy(win, rest, len);
+			win[len] = '\0';
 
-            // remove comments
-            char *nocom = malloc(strlen(win) + 1);
-            char *comment = strchr(win, '#');
-            if (comment) {
-                strncpy(nocom, win, comment - win);
-                nocom[comment - win] = '\0';
-            } else {
-                strcpy(nocom, win);
-            }
-
-            char *final = strip(nocom);
-            
-			char *comma_ptr, *space_ptr;
+			char *final = strip(win);
+			char *comma_ptr;
 			char *comma = strtok_r(final, ",", &comma_ptr);
 
-			while (comma) {
-				if (should_floatn < 256) {
-					// if comma starts and ends with quotes, remove them
-					if (*comma == '"') {
-						comma++;
-					}
-					char *end = comma + strlen(comma) - 1;
-					if (*end == '"') {
-						*end = '\0';
-					}
+			/* store each comma separated value in a seperate row */
+			while (comma && should_floatn < 256) {
+				comma = strip(comma);
+				if (*comma == '"')
+					comma++;
+				char *end = comma + strlen(comma) - 1;
+				if (*end == '"')
+					*end = '\0';
 
-					printf("comma: %s\n", comma);
-					char *argv = strtok_r(comma, " ", &space_ptr);
-					int i = 0;
-
-					while (argv) {
-						printf("argv: %s\n", argv);
-						cfg->should_float[should_floatn][i] = strdup(argv);
-						argv = strtok_r(NULL, " ", &space_ptr);
-						i++;
-					}
-
-					should_floatn++;
-				}
-				else {
-					fprintf(stderr, "sxwmrc:%d: too many should_float entries\n", lineno);
-					break;
-				}
+				/* store each programs name in its own row at index 0 */
+				cfg->should_float[should_floatn][0] = strdup(comma);
+				printf("DEBUG: should_float[%d][0] = '%s'\n", should_floatn, cfg->should_float[should_floatn][0]);
+				should_floatn++;
 				comma = strtok_r(NULL, ",", &comma_ptr);
 			}
-
-			should_floatn++;
 		}
 		else if (!strcmp(key, "call") || !strcmp(key, "bind")) {
 			char *mid = strchr(rest, ':');
@@ -301,6 +293,7 @@ found:; // label followed by declaration is a C23 extension
 				fprintf(stderr, "sxwmrc:%d: bad key in '%s'\n", lineno, combo);
 				continue;
 			}
+
 			Binding *b = alloc_bind(cfg, mods, ks);
 			if (!b) {
 				fputs("sxwm: too many binds\n", stderr);
@@ -342,6 +335,7 @@ found:; // label followed by declaration is a C23 extension
 				fprintf(stderr, "sxwmrc:%d: bad key in '%s'\n", lineno, combo);
 				continue;
 			}
+
 			Binding *b = alloc_bind(cfg, mods, ks);
 			if (!b) {
 				fputs("sxwm: too many binds\n", stderr);
